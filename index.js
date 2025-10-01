@@ -7,33 +7,16 @@ const PORT = process.env.PORT || 3000;
 app.get("/", (req, res) => {
   res.json({ 
     status: "live",
-    service: "Bybit Gold Price WebSocket",
-    uptime: process.uptime(),
-    currentEndpoint: currentEndpoint,
-    reconnections: reconnectionCount
+    service: "Bitget Gold Price WebSocket",
+    symbol: "XAUUSDT",
+    uptime: process.uptime()
   });
 });
-
-// Multiple Bybit WebSocket endpoints
-const ENDPOINTS = [
-  "wss://stream.bybit.com/v5/public/linear",
-  "wss://stream.bybit.com/v5/public/spot", 
-  "wss://stream.bybit.com/v5/public/inverse"
-];
 
 let ws = null;
 let reconnectTimeout = null;
 let reconnectionCount = 0;
-let currentEndpointIndex = 0;
-let currentEndpoint = ENDPOINTS[0];
 let lastGoldPrice = null;
-let isSubscribed = false;
-
-function getNextEndpoint() {
-  currentEndpointIndex = (currentEndpointIndex + 1) % ENDPOINTS.length;
-  currentEndpoint = ENDPOINTS[currentEndpointIndex];
-  return currentEndpoint;
-}
 
 function connectWebSocket() {
   if (reconnectTimeout) {
@@ -47,82 +30,61 @@ function connectWebSocket() {
   }
 
   reconnectionCount++;
-  isSubscribed = false;
   
-  const endpoint = getNextEndpoint();
-  console.log(`🔗 [Attempt ${reconnectionCount}] Connecting to: ${endpoint}`);
+  // Bitget WebSocket for Gold
+  const endpoint = "wss://ws.bitget.com/mix/v1/stream";
+  
+  console.log(`🔗 [Attempt ${reconnectionCount}] Connecting to Bitget for Gold...`);
   
   try {
-    ws = new WebSocket(endpoint, {
-      handshakeTimeout: 10000,
-      perMessageDeflate: false
-    });
-
-    let pingInterval;
+    ws = new WebSocket(endpoint);
 
     ws.on("open", () => {
-      console.log("✅ Connected to Bybit WebSocket");
+      console.log("✅ Connected to Bitget WebSocket");
       
-      // Send subscription message immediately
+      // Subscribe to Gold trades
       const subscribeMessage = {
         op: "subscribe",
-        args: ["tickers.XAUUSDT"]
+        args: [{
+          instType: "UMCBL",
+          channel: "trade",
+          instId: "XAUUSDT_UMCBL"
+        }]
       };
       
-      console.log("📨 Sending subscription for XAUUSDT...");
+      console.log("📨 Subscribing to Gold trades...");
       ws.send(JSON.stringify(subscribeMessage));
-
-      // Setup periodic ping (less frequent)
-      pingInterval = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          const pingMsg = { op: "ping" };
-          ws.send(JSON.stringify(pingMsg));
-        }
-      }, 60000); // Every 60 seconds instead of 25
     });
 
     ws.on("message", (data) => {
       try {
-        const parsed = JSON.parse(data.toString());
+        const message = JSON.parse(data.toString());
         
-        // Handle subscription response
-        if (parsed.success !== undefined && parsed.ret_msg === "subscribe") {
-          console.log(`✅ Successfully subscribed to: ${parsed.conn_id}`);
-          isSubscribed = true;
-          return;
-        }
-
-        // Handle ticker data - THIS IS WHAT WE WANT!
-        if (parsed.topic && parsed.topic.startsWith("tickers")) {
-          const ticker = parsed.data;
-          if (ticker.symbol === "XAUUSDT") {
-            lastGoldPrice = ticker.lastPrice;
-            console.log("═══════════════════════════════════════");
-            console.log(`🟡 GOLD PRICE UPDATE`);
-            console.log(`💰 Last Price: $${ticker.lastPrice}`);
-            console.log(`📊 Mark Price: $${ticker.markPrice}`);
-            console.log(`📈 24h Change: ${(ticker.price24hPcnt * 100).toFixed(2)}%`);
+        // Handle trade data
+        if (message.action === "snapshot" && message.arg.channel === "trade") {
+          const trades = message.data;
+          if (trades && trades.length > 0) {
+            const latestTrade = trades[0];
+            lastGoldPrice = {
+              symbol: "XAUUSDT",
+              price: parseFloat(latestTrade.price),
+              size: parseFloat(latestTrade.size),
+              side: latestTrade.side,
+              timestamp: new Date(parseFloat(latestTrade.ts)).toISOString()
+            };
+            
+            console.log("🟡 GOLD TRADE (Bitget)");
+            console.log(`💰 Price: $${latestTrade.price}`);
+            console.log(`📊 Size: ${latestTrade.size}`);
+            console.log(`🎯 Side: ${latestTrade.side}`);
             console.log(`🕐 Time: ${new Date().toLocaleTimeString()}`);
             console.log("═══════════════════════════════════════");
           }
-          return;
         }
         
-        // Handle ping responses
-        if (parsed.op === "pong") {
-          console.log("🏓 Received pong from Bybit");
-          return;
-        }
-
-        // Handle pings from Bybit
-        if (parsed.op === "ping") {
-          ws.send(JSON.stringify({ op: "pong", ts: parsed.ts }));
-          return;
-        }
-
-        // Log unknown messages for debugging
-        if (parsed.ret_msg !== "pong") {
-          console.log("📨 Other message:", JSON.stringify(parsed));
+        // Handle subscription response
+        if (message.event === "subscribe") {
+          console.log("✅ Successfully subscribed to Gold trades");
         }
 
       } catch (error) {
@@ -132,54 +94,37 @@ function connectWebSocket() {
 
     ws.on("close", (code, reason) => {
       console.log(`❌ Connection closed - Code: ${code}, Reason: ${reason || 'No reason'}`);
-      if (pingInterval) clearInterval(pingInterval);
-      
-      // If we were subscribed but got disconnected, reconnect faster
-      const delay = isSubscribed ? 2000 : 5000;
-      console.log(`🔄 Reconnecting in ${delay/1000} seconds...`);
-      reconnectTimeout = setTimeout(connectWebSocket, delay);
+      console.log(`🔄 Reconnecting in 3 seconds...`);
+      reconnectTimeout = setTimeout(connectWebSocket, 3000);
     });
 
     ws.on("error", (err) => {
       console.error("⚠️ WebSocket error:", err.message);
-      if (pingInterval) clearInterval(pingInterval);
     });
 
   } catch (error) {
     console.error("❌ Failed to create WebSocket:", error.message);
-    reconnectTimeout = setTimeout(connectWebSocket, 5000);
+    reconnectTimeout = setTimeout(connectWebSocket, 3000);
   }
 }
 
-// Health endpoint to check if we're receiving data
+// Health endpoint
 app.get("/health", (req, res) => {
   res.json({
     status: ws && ws.readyState === WebSocket.OPEN ? "connected" : "disconnected",
-    subscribed: isSubscribed,
-    currentEndpoint: currentEndpoint,
-    lastPrice: lastGoldPrice,
-    lastUpdate: lastGoldPrice ? new Date().toISOString() : null,
+    symbol: "XAUUSDT",
+    lastTrade: lastGoldPrice,
     reconnections: reconnectionCount
   });
-});
-
-// Manual reconnect endpoint
-app.post("/reconnect", (req, res) => {
-  console.log("🔄 Manual reconnection triggered");
-  connectWebSocket();
-  res.json({ message: "Reconnection initiated" });
 });
 
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🟡 Monitoring Gold (XAUUSDT) prices from Bybit`);
-  console.log(`🔧 Available endpoints: ${ENDPOINTS.length}`);
-  console.log("═══════════════════════════════════════");
+  console.log(`🟡 Monitoring Gold (XAUUSDT) from Bitget`);
   connectWebSocket();
 });
 
-// Graceful shutdown
 process.on("SIGTERM", () => {
   console.log("🛑 Shutting down gracefully...");
   if (ws) ws.close();
