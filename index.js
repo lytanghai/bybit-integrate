@@ -19,7 +19,7 @@ app.listen(PORT, () => {
     console.log("✅ Connected to Bybit WS (v5 public inverse)");
     ws.send(JSON.stringify({
       op: "subscribe",
-      args: ["trades.XAUUSD"]  // correct topic
+      args: ["trades.BTCUSDT"]  // correct topic
     }));
   });
 
