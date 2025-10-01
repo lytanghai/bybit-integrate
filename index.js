@@ -10,88 +10,29 @@ app.get("/", (req, res) => {
     service: "Bybit Gold Price WebSocket",
     uptime: process.uptime(),
     currentEndpoint: currentEndpoint,
-    reconnections: reconnectionCount,
-    endpointAttempts: endpointAttempts
+    reconnections: reconnectionCount
   });
 });
 
-app.get("/health", (req, res) => {
-  res.json({
-    status: ws && ws.readyState === WebSocket.OPEN ? "connected" : "disconnected",
-    currentEndpoint: currentEndpoint,
-    lastPrice: lastGoldPrice,
-    timestamp: new Date().toISOString()
-  });
-});
-
-app.get("/endpoints", (req, res) => {
-  res.json({
-    availableEndpoints: ENDPOINTS,
-    currentEndpoint: currentEndpoint,
-    endpointStats: endpointAttempts
-  });
-});
-
-// Multiple Bybit WebSocket endpoints for failover
+// Multiple Bybit WebSocket endpoints
 const ENDPOINTS = [
   "wss://stream.bybit.com/v5/public/linear",
   "wss://stream.bybit.com/v5/public/spot", 
-  "wss://stream.bybit.com/v5/public/inverse",
-  "wss://stream.bytick.com/v5/public/linear",
-  "wss://stream.bytick.com/v5/public/spot"
+  "wss://stream.bybit.com/v5/public/inverse"
 ];
 
 let ws = null;
 let reconnectTimeout = null;
 let reconnectionCount = 0;
 let currentEndpointIndex = 0;
-let endpointAttempts = {};
-let lastGoldPrice = null;
 let currentEndpoint = ENDPOINTS[0];
-
-// Initialize endpoint attempts counter
-ENDPOINTS.forEach(endpoint => {
-  endpointAttempts[endpoint] = 0;
-});
+let lastGoldPrice = null;
+let isSubscribed = false;
 
 function getNextEndpoint() {
-  // Get the next endpoint in round-robin fashion
   currentEndpointIndex = (currentEndpointIndex + 1) % ENDPOINTS.length;
-  const endpoint = ENDPOINTS[currentEndpointIndex];
-  currentEndpoint = endpoint;
-  return endpoint;
-}
-
-function getBestEndpoint() {
-  // Find endpoint with least attempts (simple load balancing)
-  let minAttempts = Infinity;
-  let bestEndpoint = ENDPOINTS[0];
-  
-  for (const endpoint of ENDPOINTS) {
-    if (endpointAttempts[endpoint] < minAttempts) {
-      minAttempts = endpointAttempts[endpoint];
-      bestEndpoint = endpoint;
-    }
-  }
-  
-  currentEndpoint = bestEndpoint;
-  return bestEndpoint;
-}
-
-function markEndpointAttempt(endpoint) {
-  endpointAttempts[endpoint] = (endpointAttempts[endpoint] || 0) + 1;
-  console.log(`🔧 Endpoint '${endpoint}' attempt count: ${endpointAttempts[endpoint]}`);
-}
-
-function markEndpointSuccess(endpoint) {
-  // Reset attempt count on successful connection
-  endpointAttempts[endpoint] = 0;
-  console.log(`✅ Endpoint '${endpoint}' connection successful`);
-}
-
-function markEndpointFailure(endpoint) {
-  endpointAttempts[endpoint] = (endpointAttempts[endpoint] || 0) + 1;
-  console.log(`❌ Endpoint '${endpoint}' failed, attempt count: ${endpointAttempts[endpoint]}`);
+  currentEndpoint = ENDPOINTS[currentEndpointIndex];
+  return currentEndpoint;
 }
 
 function connectWebSocket() {
@@ -106,57 +47,38 @@ function connectWebSocket() {
   }
 
   reconnectionCount++;
+  isSubscribed = false;
   
-  // Choose endpoint strategy: round-robin or least-attempts
-  const endpoint = reconnectionCount % 3 === 0 ? getBestEndpoint() : getNextEndpoint();
-  // Every 3rd reconnection, try the least used endpoint
-  
-  markEndpointAttempt(endpoint);
-  
+  const endpoint = getNextEndpoint();
   console.log(`🔗 [Attempt ${reconnectionCount}] Connecting to: ${endpoint}`);
   
   try {
     ws = new WebSocket(endpoint, {
       handshakeTimeout: 10000,
-      perMessageDeflate: false,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; GoldPriceMonitor/1.0)'
-      }
+      perMessageDeflate: false
     });
 
     let pingInterval;
-    let connectionTimeout;
-
-    // Set connection timeout
-    connectionTimeout = setTimeout(() => {
-      if (ws.readyState !== WebSocket.OPEN) {
-        console.log("⏰ Connection timeout - closing...");
-        ws.close();
-      }
-    }, 15000);
 
     ws.on("open", () => {
-      clearTimeout(connectionTimeout);
       console.log("✅ Connected to Bybit WebSocket");
-      markEndpointSuccess(endpoint);
       
-      // Send subscription message
+      // Send subscription message immediately
       const subscribeMessage = {
         op: "subscribe",
         args: ["tickers.XAUUSDT"]
       };
       
+      console.log("📨 Sending subscription for XAUUSDT...");
       ws.send(JSON.stringify(subscribeMessage));
-      console.log("📨 Subscribed to XAUUSDT ticker");
 
-      // Setup periodic ping to keep connection alive
+      // Setup periodic ping (less frequent)
       pingInterval = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
-          const pingMsg = { op: "ping", ts: Date.now() };
+          const pingMsg = { op: "ping" };
           ws.send(JSON.stringify(pingMsg));
-          console.log("🏓 Sent keep-alive ping");
         }
-      }, 25000); // Every 25 seconds
+      }, 60000); // Every 60 seconds instead of 25
     });
 
     ws.on("message", (data) => {
@@ -164,81 +86,89 @@ function connectWebSocket() {
         const parsed = JSON.parse(data.toString());
         
         // Handle subscription response
-        if (parsed.success !== undefined) {
-          console.log(`📨 Subscription response: ${parsed.ret_msg}`);
-          if (parsed.success) {
-            console.log("✅ Successfully subscribed to ticker data");
+        if (parsed.success !== undefined && parsed.ret_msg === "subscribe") {
+          console.log(`✅ Successfully subscribed to: ${parsed.conn_id}`);
+          isSubscribed = true;
+          return;
+        }
+
+        // Handle ticker data - THIS IS WHAT WE WANT!
+        if (parsed.topic && parsed.topic.startsWith("tickers")) {
+          const ticker = parsed.data;
+          if (ticker.symbol === "XAUUSDT") {
+            lastGoldPrice = ticker.lastPrice;
+            console.log("═══════════════════════════════════════");
+            console.log(`🟡 GOLD PRICE UPDATE`);
+            console.log(`💰 Last Price: $${ticker.lastPrice}`);
+            console.log(`📊 Mark Price: $${ticker.markPrice}`);
+            console.log(`📈 24h Change: ${(ticker.price24hPcnt * 100).toFixed(2)}%`);
+            console.log(`🕐 Time: ${new Date().toLocaleTimeString()}`);
+            console.log("═══════════════════════════════════════");
           }
           return;
         }
-
-        // Handle ticker data
-        if (parsed.topic === "tickers.XAUUSDT") {
-          const ticker = parsed.data;
-          lastGoldPrice = ticker.lastPrice;
-          console.log(`🟡 GOLD | Price: $${ticker.lastPrice} | Change: ${(ticker.price24hPcnt * 100).toFixed(2)}% | Time: ${new Date().toLocaleTimeString()}`);
+        
+        // Handle ping responses
+        if (parsed.op === "pong") {
+          console.log("🏓 Received pong from Bybit");
           return;
         }
-        
+
         // Handle pings from Bybit
         if (parsed.op === "ping") {
           ws.send(JSON.stringify({ op: "pong", ts: parsed.ts }));
-          console.log("🏓 Responded to Bybit ping");
           return;
         }
 
-        // Log other messages briefly for debugging
+        // Log unknown messages for debugging
         if (parsed.ret_msg !== "pong") {
-          console.log("📨 Other message type:", parsed.op || parsed.topic || "unknown");
+          console.log("📨 Other message:", JSON.stringify(parsed));
         }
 
       } catch (error) {
-        console.log("📩 Raw message (parse error):", data.toString().substring(0, 100));
+        console.log("📩 Raw message:", data.toString().substring(0, 200));
       }
     });
 
     ws.on("close", (code, reason) => {
-      console.log(`❌ Connection closed - Code: ${code}, Reason: ${reason || 'No reason provided'}`);
-      clearTimeout(connectionTimeout);
+      console.log(`❌ Connection closed - Code: ${code}, Reason: ${reason || 'No reason'}`);
       if (pingInterval) clearInterval(pingInterval);
-      markEndpointFailure(endpoint);
-      scheduleReconnect();
+      
+      // If we were subscribed but got disconnected, reconnect faster
+      const delay = isSubscribed ? 2000 : 5000;
+      console.log(`🔄 Reconnecting in ${delay/1000} seconds...`);
+      reconnectTimeout = setTimeout(connectWebSocket, delay);
     });
 
     ws.on("error", (err) => {
-      console.error(`⚠️ WebSocket error for ${endpoint}:`, err.message);
-      clearTimeout(connectionTimeout);
+      console.error("⚠️ WebSocket error:", err.message);
       if (pingInterval) clearInterval(pingInterval);
-      markEndpointFailure(endpoint);
-    });
-
-    ws.on("unexpected-response", (req, res) => {
-      console.error(`⚠️ Unexpected response from ${endpoint}:`, res.statusCode);
-      markEndpointFailure(endpoint);
     });
 
   } catch (error) {
     console.error("❌ Failed to create WebSocket:", error.message);
-    markEndpointFailure(endpoint);
-    scheduleReconnect();
+    reconnectTimeout = setTimeout(connectWebSocket, 5000);
   }
 }
 
-function scheduleReconnect() {
-  if (reconnectTimeout) return;
-  
-  // Exponential backoff with max 30 seconds
-  const baseDelay = 5000;
-  const maxDelay = 30000;
-  const delay = Math.min(baseDelay * Math.pow(1.5, reconnectionCount - 1), maxDelay);
-  
-  console.log(`🔄 Attempting to reconnect in ${Math.round(delay/1000)} seconds...`);
-  console.log(`📊 Stats: ${reconnectionCount} total reconnections`);
-  
-  reconnectTimeout = setTimeout(() => {
-    connectWebSocket();
-  }, delay);
-}
+// Health endpoint to check if we're receiving data
+app.get("/health", (req, res) => {
+  res.json({
+    status: ws && ws.readyState === WebSocket.OPEN ? "connected" : "disconnected",
+    subscribed: isSubscribed,
+    currentEndpoint: currentEndpoint,
+    lastPrice: lastGoldPrice,
+    lastUpdate: lastGoldPrice ? new Date().toISOString() : null,
+    reconnections: reconnectionCount
+  });
+});
+
+// Manual reconnect endpoint
+app.post("/reconnect", (req, res) => {
+  console.log("🔄 Manual reconnection triggered");
+  connectWebSocket();
+  res.json({ message: "Reconnection initiated" });
+});
 
 // Start server
 app.listen(PORT, () => {
@@ -251,21 +181,8 @@ app.listen(PORT, () => {
 
 // Graceful shutdown
 process.on("SIGTERM", () => {
-  console.log("🛑 SIGTERM received - Shutting down gracefully...");
-  if (ws) {
-    ws.close();
-  }
-  if (reconnectTimeout) {
-    clearTimeout(reconnectTimeout);
-  }
+  console.log("🛑 Shutting down gracefully...");
+  if (ws) ws.close();
+  if (reconnectTimeout) clearTimeout(reconnectTimeout);
   process.exit(0);
-});
-
-process.on("uncaughtException", (error) => {
-  console.error("🚨 Uncaught Exception:", error);
-  // Don't exit, let the reconnection logic handle it
-});
-
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("🚨 Unhandled Rejection at:", promise, "reason:", reason);
 });
