@@ -17,7 +17,7 @@ console.log(`HTTP server listening on port ${PORT}`);
 
 
 // WebSocket client to Bybit v5 public linear
-const ws = new WebSocket("wss://stream.bybit.com/v5/public/linear");
+const ws = new WebSocket("wss://stream.bybit.com/v5/public/inverse");
 
 
 ws.on("open", () => {
