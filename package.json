@@ -1,13 +1,13 @@
 {
-"name": "bybit-ws-test",
-"version": "1.0.0",
-"main": "index.js",
-"type": "module",
-"scripts": {
-"start": "node index.js"
-},
-"dependencies": {
-"ws": "^8.18.0",
-"express": "^4.19.0"
-}
+  "name": "bitget-ws-xauusd",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "express": "^4.19.0"
+  }
 }
