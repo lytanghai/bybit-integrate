@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>XAUUSD Live Price</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+    #price { font-size: 2em; color: gold; }
+  </style>
+</head>
+<body>
+  <h1>Live XAUUSD Price (Bybit WebSocket)</h1>
+  <div id="price">Connecting...</div>
+
+  <script>
+    const ws = new WebSocket("wss://stream.bybit.com/v5/public/linear");
+
+    ws.onopen = () => {
+      console.log("Connected ✅");
+      ws.send(JSON.stringify({
+        op: "subscribe",
+        args: ["tickers.XAUUSD"]
+      }));
+    };
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+
+      if (msg.topic === "tickers" && msg.data && msg.data.lastPrice) {
+        document.getElementById("price").innerText =
+          "💰 " + msg.data.lastPrice + " USD";
+      }
+    };
+
+    ws.onclose = () => {
+      document.getElementById("price").innerText = "Disconnected ❌";
+    };
+  </script>
+</body>
+</html>
