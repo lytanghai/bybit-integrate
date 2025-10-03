@@ -9,30 +9,17 @@
   </style>
 </head>
 <body>
-  <h1>Live XAUUSD Price (Bybit WebSocket)</h1>
+  <h1>Live XAUUSD Price (via Render Proxy)</h1>
   <div id="price">Connecting...</div>
 
   <script>
-    const ws = new WebSocket("wss://stream.bybit.com/v5/public/linear");
+    const eventSource = new EventSource("/price");
 
-    ws.onopen = () => {
-      console.log("Connected ✅");
-      ws.send(JSON.stringify({
-        op: "subscribe",
-        args: ["tickers.XAUUSD"]
-      }));
+    eventSource.onmessage = (event) => {
+      document.getElementById("price").innerText = "💰 " + event.data + " USD";
     };
 
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-
-      if (msg.topic === "tickers" && msg.data && msg.data.lastPrice) {
-        document.getElementById("price").innerText =
-          "💰 " + msg.data.lastPrice + " USD";
-      }
-    };
-
-    ws.onclose = () => {
+    eventSource.onerror = () => {
       document.getElementById("price").innerText = "Disconnected ❌";
     };
   </script>
