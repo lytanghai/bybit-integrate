@@ -1,49 +1,38 @@
-import express from "express";
-import { WebSocket } from "ws";
+const WebSocket = require("ws");
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+// Exness WebSocket endpoint
+const ws = new WebSocket("wss://ws.exness.com/v3/public/quotes");
 
-// Serve static HTML
-app.use(express.static("public"));
+// Keep track of last logged price to avoid duplicates
+let lastBid = null;
+let lastAsk = null;
 
-// Create a WebSocket connection to Bybit (from Render server)
-const bybitWS = new WebSocket("wss://stream.bybit.com/v5/public/linear");
-
-let lastPrice = null;
-
-bybitWS.on("open", () => {
-  console.log("Connected to Bybit ✅");
-  bybitWS.send(JSON.stringify({
-    op: "subscribe",
-    args: ["tickers.XAUUSD"]
-  }));
+ws.on("open", () => {
+  console.log("✅ Connected to Exness WebSocket");
+  // Subscribe to XAU/USD
+  ws.send(JSON.stringify({ type: "subscribe", symbols: ["XAUUSD"] }));
 });
 
-bybitWS.on("message", (msg) => {
-  const data = JSON.parse(msg.toString());
-  if (data.topic === "tickers" && data.data?.lastPrice) {
-    lastPrice = data.data.lastPrice;
+ws.on("message", (message) => {
+  try {
+    const data = JSON.parse(message);
+
+    if (data.type === "quote" && data.symbol === "XAUUSD") {
+      const { bid, ask, timestamp } = data;
+
+      // Only log if price changed
+      if (bid !== lastBid || ask !== lastAsk) {
+        console.log(
+          `📊 XAUUSD Tick | Bid: ${bid} | Ask: ${ask} | Timestamp: ${new Date(timestamp).toISOString()}`
+        );
+        lastBid = bid;
+        lastAsk = ask;
+      }
+    }
+  } catch (err) {
+    console.error("❌ Error parsing message:", err.message);
   }
 });
 
-// SSE endpoint for browser
-app.get("/price", (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-
-  const interval = setInterval(() => {
-    if (lastPrice) {
-      res.write(`data: ${lastPrice}\n\n`);
-    }
-  }, 1000);
-
-  req.on("close", () => {
-    clearInterval(interval);
-  });
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+ws.on("close", () => console.log("🔌 WebSocket closed"));
+ws.on("error", (err) => console.error("⚠️ WebSocket error:", err.message));

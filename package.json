@@ -1,13 +1,12 @@
 {
-  "name": "xauusd-ws-test",
+  "name": "exness-gold-websocket",
   "version": "1.0.0",
+  "description": "Exness XAUUSD WebSocket price logger",
   "main": "server.js",
-  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.21.2",
-    "ws": "^8.18.3"
+    "ws": "^8.15.0"
   }
 }
