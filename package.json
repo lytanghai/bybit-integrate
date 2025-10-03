@@ -1,12 +1,13 @@
 {
-  "name": "exness-gold-websocket",
+  "name": "tiingo-xau-websocket",
   "version": "1.0.0",
-  "description": "Exness XAUUSD WebSocket price logger",
-  "main": "server.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node index.js"
   },
   "dependencies": {
-    "ws": "^8.15.0"
+    "ws": "^8.15.0",
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.0"
   }
 }
